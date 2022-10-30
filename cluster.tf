@@ -1,53 +1,71 @@
-# Creates RDS Instance 
-resource "aws_db_instance" "mysql" {
-  identifier             = "roboshop-mysql-${var.ENV}"
-  allocated_storage      = 10
-  engine                 = "mysql"
-  engine_version         = "5.7"
-  instance_class         = "db.t3.micro"
-  db_name                = "dummy"
-  username               = "admin1"
-  password               = "RoboShop1"
-  parameter_group_name   = aws_db_parameter_group.mysql.name
-  skip_final_snapshot    = true                 # True only for non-prod workloads
-  db_subnet_group_name   = aws_db_subnet_group.mysql.name
-  vpc_security_group_ids = [aws_security_group.allow_mysql.id]
+# Creates DocDB Cluster
+resource "aws_docdb_cluster" "docdb" {
+  cluster_identifier      = "roboshop-${var.ENV}"
+  engine                  = "docdb"
+  master_username         = "admin1"
+  master_password         = "roboshop1"
+# True only during lab, in prod , we will take a snapshot and that time value will be false
+  skip_final_snapshot     = true
+  db_subnet_group_name    = aws_docdb_subnet_group.docdb.name
+  vpc_security_group_ids  = [aws_security_group.allow_docdb.id]
 }
 
-# Creates Parameter Group 
-resource "aws_db_parameter_group" "mysql" {
-  name   = "roboshop-mysql-${var.ENV}"
-  family = "mysql5.7"
-}
 
-# Creates DB Subnet Group
-resource "aws_db_subnet_group" "mysql" {
-  name       = "roboshop-mysql-${var.ENV}"
-  subnet_ids = data.terraform_remote_state.vpc.outputs.PRIVATE_SUBNET_IDS
+resource "null_resource" "mongodb-schema" { 
+  depends_on = [aws_docdb_cluster.docdb]
 
-  tags = {
-    Name = "roboshop-subnet-group-mysql-${var.ENV}"
+  provisioner "local-exec" {
+command = <<EOF
+  cd /tmp/
+  curl -s -L -o /tmp/mongodb.zip "https://github.com/stans-robot-project/mongodb/archive/main.zip"
+  wget https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem
+  unzip -o mongodb.zip 
+  cd mongodb-main 
+  mongo --ssl --host ${aws_docdb_cluster.docdb.endpoint}:27017 --sslCAFile /tmp/rds-combined-ca-bundle.pem --username admin1 --password roboshop1 < catalogue.js
+  mongo --ssl --host ${aws_docdb_cluster.docdb.endpoint}:27017 --sslCAFile /tmp/rds-combined-ca-bundle.pem --username admin1 --password roboshop1 < users.js
+  
+EOF   
   }
 }
 
-# Creates Security Group for MySQL
-resource "aws_security_group" "allow_mysql" {
-  name        = "roboshop-mysql-${var.ENV}"
-  description = "roboshop-mysql-${var.ENV}"
+
+# Creates Subnet Group
+resource "aws_docdb_subnet_group" "docdb" {
+  name       = "roboshop-mongo-${var.ENV}"
+  subnet_ids = data.terraform_remote_state.vpc.outputs.PRIVATE_SUBNET_IDS
+
+  tags = {
+    Name = "My docdb subnet group"
+  }
+}
+
+# Creats DocDB Cluster Instances and adds them to the cluster
+resource "aws_docdb_cluster_instance" "cluster_instances" {
+  count              = 1
+  identifier         = "roboshop-${var.ENV}"
+  cluster_identifier = aws_docdb_cluster.docdb.id
+  instance_class     = "db.t3.medium"
+}
+
+
+# Creates Security Group for DocumentDB
+resource "aws_security_group" "allow_docdb" {
+  name        = "roboshop-docdb-${var.ENV}"
+  description = "roboshop-docdb-${var.ENV}"
   vpc_id      = data.terraform_remote_state.vpc.outputs.VPC_ID
 
   ingress {
-    description      = "Allow MySQL Connection From Default VPC"
-    from_port        = 3306
-    to_port          = 3306
+    description      = "Allow DocDB Connection From Default VPC"
+    from_port        = 27017
+    to_port          = 27017
     protocol         = "tcp"
     cidr_blocks      = [data.terraform_remote_state.vpc.outputs.DEFAULT_VPC_CIDR]
   }
 
   ingress {
-    description      = "Allow MySQL Connection From Private VPC"
-    from_port        = 3306
-    to_port          = 3306
+    description      = "Allow DocDB Connection From Private VPC"
+    from_port        = 27017
+    to_port          = 27017
     protocol         = "tcp"
     cidr_blocks      = [data.terraform_remote_state.vpc.outputs.VPC_CIDR]
   }
@@ -61,9 +79,6 @@ resource "aws_security_group" "allow_mysql" {
   }
 
   tags = {
-    Name = "roboshop-mysql-sg-${var.ENV}"
+    Name = "roboshop-docdb-sg-${var.ENV}"
   }
 }
-
-
-
