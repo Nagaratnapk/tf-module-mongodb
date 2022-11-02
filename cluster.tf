@@ -2,30 +2,12 @@
 resource "aws_docdb_cluster" "docdb" {
   cluster_identifier      = "roboshop-${var.ENV}"
   engine                  = "docdb"
-  master_username         = "admin1"
-  master_password         = "roboshop1"
+  master_username         = jsondecode(data.aws_secretsmanager_secret_version.secrets.secret_string)["DOCDB_USERNAME"]
+  master_password         = jsondecode(data.aws_secretsmanager_secret_version.secrets.secret_string)["DOCDB_PASSWORD"]
 # True only during lab, in prod , we will take a snapshot and that time value will be false
   skip_final_snapshot     = true
   db_subnet_group_name    = aws_docdb_subnet_group.docdb.name
   vpc_security_group_ids  = [aws_security_group.allow_docdb.id]
-}
-
-
-resource "null_resource" "mongodb-schema" { 
-  depends_on = [aws_docdb_cluster.docdb]
-
-  provisioner "local-exec" {
-command = <<EOF
-  cd /tmp/
-  curl -s -L -o /tmp/mongodb.zip "https://github.com/stans-robot-project/mongodb/archive/main.zip"
-  wget https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem
-  unzip -o mongodb.zip 
-  cd mongodb-main 
-  mongo --ssl --host ${aws_docdb_cluster.docdb.endpoint}:27017 --sslCAFile /tmp/rds-combined-ca-bundle.pem --username admin1 --password roboshop1 < catalogue.js
-  mongo --ssl --host ${aws_docdb_cluster.docdb.endpoint}:27017 --sslCAFile /tmp/rds-combined-ca-bundle.pem --username admin1 --password roboshop1 < users.js
-  
-EOF   
-  }
 }
 
 
@@ -41,10 +23,10 @@ resource "aws_docdb_subnet_group" "docdb" {
 
 # Creats DocDB Cluster Instances and adds them to the cluster
 resource "aws_docdb_cluster_instance" "cluster_instances" {
-  count              = 1
+  count              = var.DOCDB_INSTANCE_COUNT
   identifier         = "roboshop-${var.ENV}"
   cluster_identifier = aws_docdb_cluster.docdb.id
-  instance_class     = "db.t3.medium"
+  instance_class     = var.DOCDB_INSTANCE_CLASS
 }
 
 
@@ -56,16 +38,16 @@ resource "aws_security_group" "allow_docdb" {
 
   ingress {
     description      = "Allow DocDB Connection From Default VPC"
-    from_port        = 27017
-    to_port          = 27017
+    from_port        = var.DOCDB_PORT
+    to_port          = var.DOCDB_PORT
     protocol         = "tcp"
     cidr_blocks      = [data.terraform_remote_state.vpc.outputs.DEFAULT_VPC_CIDR]
   }
 
   ingress {
     description      = "Allow DocDB Connection From Private VPC"
-    from_port        = 27017
-    to_port          = 27017
+    from_port        = var.DOCDB_PORT
+    to_port          = var.DOCDB_PORT
     protocol         = "tcp"
     cidr_blocks      = [data.terraform_remote_state.vpc.outputs.VPC_CIDR]
   }
